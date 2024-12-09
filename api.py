@@ -8,20 +8,24 @@ from flask_cors import CORS
 import requests
 import logging
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
 
 # Flask and Logging Setup
 app = Flask(__name__)
 CORS(app)
 logging.basicConfig(level=logging.INFO)
+load_dotenv()
+
+port = os.getenv('PORT')
 
 # Firestore Initialization
 credentials = Credentials.from_service_account_file(
-    os.getenv('GOOGLE_APPLICATION_CREDENTIALS', './firestore-admin.json')
+    os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
 )
 firestore_client = firestore.Client(credentials=credentials,project='capstone-ezmoney-service-app')
 
 # Model Setup
-MODEL_URL = "https://storage.googleapis.com/ezmoney-model-storage/model.h5"
+MODEL_URL = os.getenv('MODEL_URL')
 LOCAL_MODEL_PATH = "downloaded_model.h5"
 
 # Download model if not present
@@ -45,7 +49,9 @@ CATEGORY_ENCODING = {
     "shopping": 4,
     "Utilitas": 5,
     "Hiburan": 6,
-    "Lain-Lain": 0
+    "Lain-Lain": 7,
+    "saving": 8,
+    "default": 0
 }
 
 # Initialize smoothing
@@ -79,9 +85,10 @@ def get_user_savings_info(firestore_client, user_id, month):
         
         savings_data = savings_doc.to_dict()
         savings_balance = savings_data.get('recommendedSavings', 0)
+        total_saving = savings_data.get('savingBalance', 0)
         savings_percentage = savings_data.get('saving', 2)
         
-        return savings_balance, savings_percentage
+        return savings_balance, savings_percentage, total_saving
     except Exception as e:
         logging.error(f"Savings info retrieval error: {e}")
         return 0, 2  # Default values
@@ -123,7 +130,7 @@ def check_spending(amount, savings_balance, savings_percentage):
         return f"Warning: Spending exceeds {savings_percentage}% of savings."
     return "Spending is within limits."
 
-def generate_enhanced_spending_alert(total_spending, savings_balance, savings_percentage, predicted_label):
+def generate_enhanced_spending_alert(total_spending, savings_balance, total_saving, savings_percentage, predicted_label):
     """
     Generate a comprehensive and structured JSON response for spending analysis.
     
@@ -144,6 +151,7 @@ def generate_enhanced_spending_alert(total_spending, savings_balance, savings_pe
         "financial_indicators": {
             "total_spending": total_spending,
             "savings_balance": savings_balance,
+            "total_saving": total_saving,
             "savings_percentage": savings_percentage,
             "prediction_score": float(predicted_label)
         },
@@ -181,7 +189,7 @@ def generate_enhanced_spending_alert(total_spending, savings_balance, savings_pe
 Pengeluaran Anda telah MELEBIHI total tabungan.
 
 Detail Keuangan:
-• Total Tabungan: Rp {savings_balance:,.2f}
+• Total Tabungan: Rp {total_saving:,.2f}
 • Total Pengeluaran: Rp {total_spending:,.2f}
 • Selisih: Rp {spending_difference:,.2f}
 
@@ -218,7 +226,7 @@ Pola pengeluaran Anda menunjukkan risiko keuangan.
 
 Detail:
 • Rasio Pengeluaran: {spending_ratio:.2f}%
-• Total Tabungan: Rp {savings_balance:,.2f}
+• Total Tabungan: Rp {total_saving:,.2f}
 • Total Pengeluaran: Rp {total_spending:,.2f}
 
 Perhatian diperlukan untuk mencegah risiko keuangan!""",
@@ -254,7 +262,7 @@ Anda sedang melakukan manajemen keuangan dengan sangat baik!
 
 Detail:
 • Rasio Pengeluaran: {spending_ratio:.2f}%
-• Total Tabungan: Rp {savings_balance:,.2f}
+• Total Tabungan: Rp {total_saving:,.2f}
 • Total Pengeluaran: Rp {total_spending:,.2f}
 
 Tetap pertahankan kinerja keuangan Anda!""",
@@ -283,7 +291,7 @@ def predict_spending(user_id, month):
             return jsonify({"error": "Invalid month format. Use YYYY-MM"}), 400
 
         # Get user savings information
-        savings_balance, savings_percentage = get_user_savings_info(
+        savings_balance, savings_percentage, total_saving = get_user_savings_info(
             firestore_client, user_id, month
         )
 
@@ -331,6 +339,7 @@ def predict_spending(user_id, month):
         return jsonify({
             **generate_enhanced_spending_alert(
                 total_spending=total_spending, 
+                total_saving=total_saving,
                 savings_balance=savings_balance, 
                 savings_percentage=savings_percentage, 
                 predicted_label=predicted_label
@@ -344,4 +353,4 @@ def predict_spending(user_id, month):
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=port)
